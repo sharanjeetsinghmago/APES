@@ -1,0 +1,766 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <sys/types.h> 
+#include <sys/socket.h>
+#include <netinet/in.h>
+
+typedef struct{
+	char string[50];
+	int string_length;
+	int USR_Led_Control;
+}message;
+
+int main()
+{
+	int socket_server,accept_var;
+    char buffer[256];
+    struct sockaddr_in server_addr, client_addr;
+	int portno = 3000;
+	message *ptr;
+    message mesg_struct;
+	
+	socket_server = socket(AF_INET,SOCK_STREAM,0);
+	if(!(socket_server))
+		printf("ERROR opening socket\n");
+	else printf("Successfully created server socket\n");
+
+	server_addr.sin_family = AF_INET;
+    server_addr.sin_addr.s_addr = INADDR_ANY;
+    server_addr.sin_port = htons(portno);
+	
+	if (bind(socket_server, (struct sockaddr *) &server_addr, sizeof(server_addr)) < 0) 
+        printf("ERROR on binding\n");
+	else printf("Binding successful\n");
+	
+	//listen
+	if(listen(socket_server,5) < 0)
+		printf("ERROR listening\n");
+	else printf("Listening success\n");
+	
+	//accept
+	accept_var = accept(socket_server, (struct sockaddr *) &client_addr, 0);
+     if (accept_var<0) 
+          printf("ERROR on accept, %i\n", accept_var);
+	  
+	char buff[sizeof(message)] = {0};
+	
+    int read_var = read(accept_var,buff,sizeof(message));
+     
+	if (read_var < 0) 
+		printf("ERROR reading from socket\n");
+	ptr = (message*)(buff);
+    printf("Server read string: %s, String length = %d, USR led status: %d\n", ptr->string, ptr->string_length, ptr->USR_Led_Control);
+
+	ptr = &mesg_struct;
+    strcpy(mesg_struct.string, "Server write message\n");
+    mesg_struct.string_length = strlen(mesg_struct.string);
+    mesg_struct.USR_Led_Control = 1;
+    int write_var = write(accept_var,ptr,sizeof(message));
+	if (write_var < 0)
+		printf("ERROR writing to socket\n");
+
+    
+     
+	close(accept_var);
+    close(socket_server);
+     return 0;   
+	
+
+	return 0;
+	
+}
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <string.h>
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <netdb.h> 
+
+typedef struct{
+	char string[50];
+	int string_length;
+	int USR_Led_Control;
+}message;
+
+int main(int argc, char* argv[])
+{
+	int socket_server,accept_var;
+    char buff[256];
+    struct sockaddr_in server_addr, client_addr;
+	int portno = 3000;
+	message *ptr;
+    message mesg_struct;
+	
+	socket_server = socket(AF_INET,SOCK_STREAM,0);
+	if(!(socket_server))
+		printf("ERROR opening socket\n");
+	else printf("Successfully created client socket\n");
+
+	server_addr.sin_family = AF_INET;
+	struct hostent *host = gethostbyname(argv[1]);
+	memcpy(&server_addr.sin_addr, host->h_addr, host->h_length);
+    	server_addr.sin_port = htons(portno);
+	
+	if (connect(socket_server,(struct sockaddr *) &server_addr,sizeof(server_addr)) < 0) 
+        printf("ERROR connecting\n");
+	
+	
+	//write
+    ptr = &mesg_struct;
+    strcpy(mesg_struct.string, "client to server");
+       mesg_struct.string_length = strlen(mesg_struct.string);
+       mesg_struct.USR_Led_Control = 0;
+	int send_var = send(socket_server, (void*)(&mesg_struct), sizeof(mesg_struct),0);
+	if (send_var < 0) 
+         printf("ERROR sending to socket\n");
+
+	
+    int read_var = read(socket_server,buff,sizeof(message));
+    if (read_var < 0) 
+         printf("ERROR reading from socket\n");
+	 ptr = (message*)(buff);
+    printf("Client read string: %s, String length = %d, USR led status: %d\n", ptr->string, ptr->string_length, ptr->USR_Led_Control);
+    
+    close(socket_server);
+    return 0;
+	
+	
+}
+#include <fcntl.h>           /* For O_* constants */
+#include <sys/stat.h>        /* For mode constants */
+#include <mqueue.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <stdint.h>
+#include <string.h>
+#include <unistd.h>
+#include <errno.h>
+
+#define SH_Q_NAME 		"/myIPCSharedQ"
+#define SH_Q_QSIZE		8
+
+#define MUTEX_NAME		"/mySharedRWMutex"
+#define CONDVAR_NAME	"/mySharedRWCondVar"
+
+typedef struct{
+    char str[20];
+    size_t len;
+    uint8_t usr_ctr;
+}msg_str;
+
+int main()
+{
+	struct mq_attr mysharedQ_attr;
+	mysharedQ_attr.mq_maxmsg = SH_Q_QSIZE;
+	mysharedQ_attr.mq_msgsize = sizeof(msg_str);
+
+	mqd_t mySharedQ = mq_open(SH_Q_NAME, O_CREAT | O_RDWR, 0666, &mysharedQ_attr);
+
+	if(mySharedQ == (mqd_t)-1)
+	{
+		printf("[ERROR] QUEUE OPEN ERROR.: %s\n",strerror(errno));
+		return -1;
+	}
+
+	const char* msg = "Hello from Process1";
+    char *payload_cptr;
+    msg_str payloadSend = {0};
+    payload_cptr = (char*)&payloadSend;
+
+    memmove(payloadSend.str,msg,strlen(msg));
+    payloadSend.len = strlen(payloadSend.str);
+    payloadSend.usr_ctr = 1;
+
+	int ret = mq_send(mySharedQ, payload_cptr, sizeof(payloadSend),0);
+	if(ret == -1)
+	{
+		printf("[ERROR] Q Send error: %s\n",strerror(errno));
+		return -1;
+	}
+
+	printf("[INFO] Message Queued\n{Message: %s\nMessageLen: %d\nUSRLED: %d}\n",payloadSend.str,payloadSend.len,payloadSend.usr_ctr);
+
+	printf("[INFO] Will wait for Process 2 to enqueue some message\n");
+
+    msg_str payloadRecv = {0};
+    payload_cptr = (char*)&payloadRecv;
+
+	ret = mq_receive(mySharedQ, payload_cptr, sizeof(payloadRecv),0);
+	if(ret == -1)
+	{
+		printf("[ERROR] Q Send error: %s\n",strerror(errno));
+		return -1;
+	}
+	printf("[INFO] Message recd size: %d\n",ret);
+	printf("[INFO] Message Dequeued\n{Message: %s\nMessageLen: %d\nUSRLED: %d}\n",payloadRecv.str,payloadRecv.len,payloadRecv.usr_ctr);
+
+	mq_unlink(SH_Q_NAME);
+
+	printf("[INFO] QUEUE DESTROYED\n");
+
+	return 0;
+}#include <fcntl.h>           /* For O_* constants */
+#include <sys/stat.h>        /* For mode constants */
+#include <mqueue.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <stdint.h>
+#include <string.h>
+#include <unistd.h>
+#include <errno.h>
+
+#define SH_Q_NAME 		"/myIPCSharedQ"
+#define SH_Q_QSIZE		8
+
+#define MUTEX_NAME		"/mySharedRWMutex"
+#define CONDVAR_NAME	"/mySharedRWCondVar"
+
+typedef struct{
+    char str[20];
+    size_t len;
+    uint8_t usr_ctr;
+}msg_str;
+
+int main()
+{
+	struct mq_attr mysharedQ_attr;
+	mysharedQ_attr.mq_maxmsg = SH_Q_QSIZE;
+	mysharedQ_attr.mq_msgsize = sizeof(msg_str);
+
+	mqd_t mySharedQ = mq_open(SH_Q_NAME, O_CREAT | O_RDWR, 0666, &mysharedQ_attr);
+
+	if(mySharedQ == (mqd_t)-1)
+	{
+		printf("[ERROR] QUEUE OPEN ERROR.: %s\n",strerror(errno));
+		return -1;
+	}
+
+    char *payload_cptr;
+    msg_str payloadRecv = {0};
+    payload_cptr = (char*)&payloadRecv;
+
+	int ret = mq_receive(mySharedQ, payload_cptr, sizeof(payloadRecv),0);
+	if(ret == -1)
+	{
+		printf("[ERROR] Q Send error: %s\n",strerror(errno));
+		return -1;
+	}
+	printf("[INFO] Message recd size: %d\n",ret);
+	//payloadptr = (msg_str*)readbuf;
+    printf("[INFO] Message Dequeued\n{Message: %s\nMessageLen: %d\nUSRLED: %d}\n",payloadRecv.str,payloadRecv.len,payloadRecv.usr_ctr);
+
+
+    const char* msg = "Hello from Process2";
+    msg_str payloadSend = {0};
+    payload_cptr = (char*)&payloadSend;
+
+    memmove(payloadSend.str,msg,strlen(msg));
+    payloadSend.len = strlen(payloadSend.str);
+    payloadSend.usr_ctr = 1;
+
+	ret = mq_send(mySharedQ, payload_cptr, sizeof(payloadSend),0);
+	if(ret == -1)
+	{
+		printf("[ERROR] Q Send error: %s\n",strerror(errno));
+		return -1;
+	}
+
+	printf("[INFO] Message Queued\n{Message: %s\nMessageLen: %d\nUSRLED: %d}\n",payloadSend.str,payloadSend.len,payloadSend.usr_ctr);
+
+
+	/*Closing the Q. Process 1 will destroy the queue */
+	mq_close(mySharedQ);
+
+	printf("[ERROR] QUEUE CLOSED\n");
+	return 0;
+}#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <string.h>
+#include <sys/wait.h>
+
+#define LOG(format, ...) printf("[PID:%d] ",getpid()); printf(format, ##__VA_ARGS__)
+
+typedef struct
+{
+	char str[20];
+	size_t len;
+	int usr_ctr;
+}msg_str;
+
+char* msg1 = "Ping from Process 1";
+//char* msg3 = "Pjygfvjgy";
+char* msg2 = "Ping Back from Process 2";
+
+int main()
+{
+	
+	int p1[2],p2[2],i,pid;
+
+	if (pipe(p1)==-1)
+    {
+        LOG("[ERROR] Pipe call error\n");
+        return 1;
+    }
+    if (pipe(p2)==-1)
+    {
+        LOG("[ERROR] Pipe call error\n");
+        return 1;
+    }
+
+	pid = fork();
+
+	if(pid > 0)
+	{
+		char *message_cptr;
+		msg_str message_send;
+		message_cptr = (char*)&message_send;
+		
+		memcpy(message_send.str,msg1,strlen(msg1)+1);
+		message_send.len = strlen(message_send.str);
+		message_send.usr_ctr = 1;
+		//strcpy(&(mssg1.str),"Process 1 message");
+		close(p1[0]);
+		write(p1[1], message_cptr, sizeof(message_send));
+		close(p1[1]);
+		
+		wait(NULL);
+		
+		close(p2[1]);
+
+		char inbuf[sizeof(msg_str)];
+		msg_str *msgptr;
+
+		read(p2[0], inbuf, sizeof(msg_str));
+		
+		msgptr = (msg_str*)inbuf;
+
+		printf("Message Recieved\nMessage: %s\nMessageLen: %d\nUSRLED: %d\n",msgptr->str,msgptr->len,msgptr->usr_ctr);
+
+		close(p2[0]);
+		exit(0);
+	}
+	else if(pid == 0)
+	{
+		//close(p2[1]);
+
+		char inbuf[sizeof(msg_str)];
+		msg_str *msgptr;		
+
+		read(p1[0], inbuf, sizeof(msg_str));
+		
+		msgptr = (msg_str*)inbuf;
+		printf("Message Recieved\nMessage: %s\nMessageLen: %d\nUSRLED: %d\n",msgptr->str,msgptr->len,msgptr->usr_ctr);
+ 
+
+		close(p1[0]);
+		close(p2[0]);
+		
+		char *message_cptr;
+		msg_str message_send;
+		message_cptr = (char*)&message_send;
+
+		memcpy(message_send.str,msg2,strlen(msg2)+1);
+		message_send.len = strlen(message_send.str);
+		message_send.usr_ctr = 0;
+
+		write(p2[1], message_cptr, sizeof(message_send));
+		close(p2[1]);
+		exit(0);
+	}
+
+}#include <sys/mman.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <errno.h>
+#include <unistd.h>
+#include <stdio.h>
+#include <string.h>
+#include <stdint.h>
+#include <pthread.h>
+#include <semaphore.h>
+#include <sys/types.h>
+#include <stdlib.h>
+
+#define SH_MEM_NAME	"my_sm"
+#define SEM_NAME 	"my_semaphore"
+
+typedef struct{
+    char str[20];
+    int len;
+    int usr_ctr;
+}msg_str;
+
+
+int main()
+{
+	printf("Currently in process 1\n");
+	
+	int sm_fd = shm_open(SH_MEM_NAME, O_CREAT | O_RDWR, 0666);
+	if(sm_fd < 0)
+	{
+		perror("Cannot access shared memory");
+		exit(1);
+	}
+
+	int sm_size = sizeof(msg_str);
+
+	int ret = ftruncate(sm_fd, sm_size);
+	if(ret < 0)
+	{
+		perror("Ftruncate error");
+		exit(1);
+	}
+
+	msg_str * shared_mem = mmap(NULL, sm_size, PROT_READ | PROT_WRITE, MAP_SHARED , sm_fd, 0);
+	if(shared_mem < 0)
+	{
+		printf("[ERROR] mmap error: %s\n",strerror(errno));
+		return -1;
+	}
+
+	sem_t * sem = sem_open(SEM_NAME, O_CREAT, 0666, 0);
+	if(sem == NULL)
+	{
+		printf("[ERROR] Sem open Failed:%s\n",strerror(errno));
+		return -1;	
+	}
+
+	char msg[] = "Hello from Process1";
+    	char * payload_cptr;
+    	msg_str payloadSend = {0};
+    	payload_cptr = (char*)&payloadSend;
+
+    	strcpy(payloadSend.str,msg);
+    	payloadSend.len = strlen(payloadSend.str);
+    	payloadSend.usr_ctr = 1;
+
+    	memcpy(shared_mem, &payloadSend, sm_size);
+
+    	sem_post(sem);
+
+    	msg_str payloadRecv = {0};
+		payload_cptr = (char*)&payloadRecv;
+
+    	memcpy(&payloadRecv, shared_mem, sm_size);
+
+    	printf("[INFO] Message From Shared Mem\n{Message: %s\nMessageLen: %d\nUSRLED: %d}\n",payloadRecv.str,payloadRecv.len,payloadRecv.usr_ctr);
+
+		ret = shm_unlink(SH_MEM_NAME);
+	if(ret < 0)
+	{
+		printf("[ERROR] Cannot destroy Shared Mem: %s",strerror(errno));
+		return -1;
+	}
+
+	return 0;
+}
+#include <sys/mman.h>
+#include <sys/stat.h>   
+#include <fcntl.h>
+#include <errno.h>
+#include <unistd.h>
+#include <stdio.h>
+#include <string.h>
+#include <stdint.h>
+#include <pthread.h>
+#include <semaphore.h>
+#include <sys/wait.h>
+
+#define SH_MEM_NAME 	"my_sm"
+#define SEM_NAME 	"my_semaphore"
+
+typedef struct
+{
+	char str[20];	
+	int len;
+	int usr_ctr;
+}msg_str;
+
+
+int main()
+{
+	printf("[INFO] Starting the process 2\n");	
+	int shmem_fd = shm_open(SH_MEM_NAME, O_CREAT | O_RDWR, 0666);
+	if(shmem_fd < 0 )
+	{
+		printf("[ERROR] Cannot open Shared Mem: %s",strerror(errno));
+		return -1;
+	}
+
+	int sm_size = sizeof(msg_str);
+	void *shared_mem = mmap(NULL, sm_size, PROT_READ | PROT_WRITE, MAP_SHARED , shmem_fd, 0);
+	if(shared_mem == (void*)-1)
+	{
+		printf("[ERROR] mmap error: %s\n", strerror(errno));
+		return -1;
+	}
+
+	/* Creating a semaphore to sync the reads and writes between 2 processes */
+	sem_t *sem = sem_open(SEM_NAME, O_CREAT, 0666, 0);
+	if(SEM_FAILED == sem)
+	{
+		printf("[ERROR] Sem open Failed:%s\n",strerror(errno));
+		return -1;	
+	}
+
+	/* Waiting for the process 1 to post the sem after writing  to the shared mem */
+	sem_wait(sem);
+	//wait(NULL);
+
+	msg_str payloadRecv = {0};
+    char *payload_cptr = (char*)&payloadRecv;
+
+    memcpy(payload_cptr,(char*)shared_mem, sm_size);
+
+    printf("[INFO] Message From Proc 1 through Shared Mem\n{Message: %s\nMessageLen: %d\nUSRLED: %d}\n",payloadRecv.str,payloadRecv.len,payloadRecv.usr_ctr);
+
+    const char* msg = "Hello from Process2";
+    msg_str payloadSend = {0};
+    payload_cptr = (char*)&payloadSend;
+
+    memmove(payloadSend.str,msg,strlen(msg));
+    payloadSend.len = strlen(payloadSend.str);
+    payloadSend.usr_ctr = 1;
+
+    /* Copy the contents of the payload into the share memory */
+    memcpy((char*)shared_mem, payload_cptr, sm_size);
+
+    /*Indicating the process 1 that the  has been written for Process 1 eyes only */
+    sem_post(sem);
+
+	/*Closing the shared memory handle*/
+	int ret = close(shmem_fd);
+	if(ret < 0)
+	{
+		printf("[ERROR] Cannot close Shared Mem: %s",strerror(errno));
+		return -1;
+	}
+  sem_unlink(SEM_NAME);
+	
+	return 0;
+}
+#include <linux/init.h>
+#include <linux/module.h>
+#include <linux/moduleparam.h>
+#include <linux/errno.h>
+#include <linux/sched.h>
+#include <linux/pid.h>
+
+
+#define getChildrenCount(child_taskStruct)		\
+({												\
+	static unsigned int child_count = 0;		\
+	struct list_head *list_itr	;				\
+	list_for_each(list_itr,child_taskStruct)	\
+	{											\
+		child_count++;							\
+	}											\
+	child_count;								\
+})
+
+
+int __init processtree_init(void)
+{
+	struct task_struct *task;
+
+	printk(KERN_INFO "Initializing The Processtree Kernel Module.\n");
+
+	task = current;
+
+    do
+    {
+        printk(KERN_INFO "Process : %s\t PID: %d\t State: %d\t Number of Children: %u\t Nice: %d", task->comm, task->pid, task->state, getChildrenCount(&task->children),  task_nice(task));
+        task = task->parent;
+
+    }while(0 != task->pid);	
+
+	return 0;
+}
+
+
+void __exit processtree_exit(void)
+{
+	printk(KERN_INFO "Exiting Process tree example Module. Function %s\n",__FUNCTION__);
+}
+
+
+module_init(processtree_init);
+module_exit(processtree_exit);
+
+MODULE_LICENSE("GPL");
+MODULE_AUTHOR("Sharanjeet Singh Mago");
+MODULE_DESCRIPTION("");
+MODULE_ALIAS("processtree");#include <linux/init.h>
+#include <linux/module.h>
+#include <linux/moduleparam.h>
+#include <linux/kernel.h>
+#include <linux/timer.h>
+#include <linux/kthread.h>	
+#include <linux/delay.h>
+#include <linux/kfifo.h>
+#include <linux/sched.h>
+
+MODULE_LICENSE("GPL");
+MODULE_AUTHOR("Sharanjeet Singh Mago");
+MODULE_DESCRIPTION("");
+MODULE_ALIAS("kthread_fifo");
+
+#define MY_KFIFO_NAME	mykfifo
+#define MY_KFIFO_NAME_P	&mykfifo
+
+/*Should be a power of 2 */
+#define MY_KFIFO_SIZE	(1<<4)
+
+static DEFINE_MUTEX(fifo_lock);
+
+static int x = 0;
+static int y = 0;
+
+struct task_struct *task1;
+struct task_struct *task2;
+
+static DECLARE_KFIFO(MY_KFIFO_NAME,struct task_struct*,MY_KFIFO_SIZE);	
+
+static unsigned long stimeInterval= 5;
+module_param(stimeInterval, ulong, S_IRUGO | S_IWUSR);
+	
+int task1_callback(void *params)
+{
+	printk(KERN_INFO "From %s\n",__FUNCTION__);
+
+	while(!kthread_should_stop())
+	{		
+		/* Lock the mutex*/
+		if (mutex_lock_interruptible(&fifo_lock))
+		{
+			printk(KERN_ERR "Cannot get the lock\n");
+			//return -1;
+			return -ERESTARTSYS;
+		}
+		/* Push the data into kfifo*/
+		if(0 == kfifo_put(MY_KFIFO_NAME_P, current))
+			printk(KERN_INFO "KFIFO FULL\n");
+		else
+		{
+			//printk(KERN_INFO "Process pushed id: %d\n",current->pid);
+		}
+
+		/* Unlock the mutex*/
+		mutex_unlock(&fifo_lock);
+
+		/* Signal the condition variable */
+
+		x++;
+		ssleep(stimeInterval);
+	}
+
+	printk(KERN_INFO "%s is terminated\n",__FUNCTION__);	
+
+	return x;
+}
+
+int task2_callback(void *params)
+{
+	struct task_struct *fifoData;
+	printk(KERN_INFO "From %s\n",__FUNCTION__);
+
+	while(!kthread_should_stop())
+	{
+		/* Lock the mutex*/
+		if (mutex_lock_interruptible(&fifo_lock))
+		{
+			printk(KERN_ERR "Cannot get the lock\n");
+			//return -1;
+			return -ERESTARTSYS;
+		}
+
+		/* Wait for the condition variable */
+
+		/* Pop the data from kfifo*/
+		if(0 == kfifo_get(MY_KFIFO_NAME_P, &fifoData))
+		{
+			//printk(KERN_INFO "KFIFO EMPTY\n");
+		}
+		else	
+		{
+			/* Process Id and Vruntime */
+			printk(KERN_INFO "Previous Process ID: %d, Vruntime: %llu\n",list_prev_entry(fifoData, tasks)->pid, list_prev_entry(fifoData, tasks)->se.vruntime);
+			printk(KERN_INFO "Current Process ID: %d, Vruntime: %llu\n",fifoData->pid, fifoData->se.vruntime);
+			printk(KERN_INFO "Next Process ID: %d, Vruntime: %llu\n",list_next_entry(fifoData, tasks)->pid, list_next_entry(fifoData, tasks)->se.vruntime);
+			y++;
+		}
+
+		/* Unlock the mutex*/	
+		mutex_unlock(&fifo_lock);
+
+		
+	}
+
+	printk(KERN_INFO "%s is terminated\n",__FUNCTION__);
+
+	return y;	
+}
+
+int __init kthread_fifo_init(void)
+{
+	printk(KERN_INFO "Initializing kthread kfifo example Module. Function %s\n",__FUNCTION__);
+
+	/* Init a kfifo */
+	INIT_KFIFO(mykfifo);
+
+	/* Create two threads */
+	task1 = kthread_run(task1_callback,NULL,"Producer Task");
+	if(IS_ERR(task1))	
+	{
+		printk(KERN_ERR "Producer Thread run failed.\n");
+		return -1;
+	}
+
+	task2 = kthread_run(task2_callback,NULL,"Consumer Task");
+	if(IS_ERR(task2))	
+	{
+		int ret;
+		printk(KERN_ERR "Consumer thread run failed.\n");
+		ret = kthread_stop(task1);
+		if(-1 != ret)
+		{
+			printk(KERN_INFO "Producer Thread has stopped with %d\n",ret);
+		}
+		return -1;
+	}
+
+	/* Everything went as expected */
+	return 0;
+}
+
+
+void __exit kthread_fifo_exit(void)
+{
+	/* Delete the kfifo */
+
+	/* Stop the kthreads created */
+	int ret = kthread_stop(task1);
+	if(-1 != ret)
+	{
+		printk(KERN_INFO "Producer thread has stopped. Data Produced Count:%d\n",ret);
+	}
+	else printk(KERN_ERR "Error in Producer Thread");	
+
+	ret = kthread_stop(task2);
+	if(-1 != ret)
+	{
+		printk(KERN_INFO "Consumer thread has stopped. Data Consumed Count:%d\n",ret);
+	}
+	else printk(KERN_ERR "Error in Consumer Thread");
+
+	printk(KERN_INFO "Exiting Kthread kfifo example Module. Function %s\n",__FUNCTION__);
+}
+
+
+module_init(kthread_fifo_init);
+module_exit(kthread_fifo_exit);
