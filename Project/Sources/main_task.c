@@ -11,7 +11,10 @@ void *func_temp()
 		printf("Error Initializing Temperature Task\n");
   	else
 		//get_temp();
-		read_temp_data_reg();
+		while(1)
+		{
+			read_temp_data_reg();
+		}
 	printf("Temperature Thread Finished\n");
 }
 
